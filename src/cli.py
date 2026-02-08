@@ -48,6 +48,21 @@ def main():
         sys.exit(1)
 
 
+KNOWN_VERSIONS = {"3.0", "4.0"}
+
+
+def validate_input_version(data: dict) -> None:
+    """Validate the version field of input data.
+
+    Logs warnings for missing or unknown versions but never errors out.
+    """
+    version = data.get("version", "")
+    if not version:
+        print("Warning: input data has no version field (deprecated format)", file=sys.stderr)
+    elif version not in KNOWN_VERSIONS:
+        print(f"Warning: unknown input version '{version}', proceeding anyway", file=sys.stderr)
+
+
 def cmd_map(args):
     """Execute the map command."""
     # Handle backward compat: --scip overrides positional if provided
