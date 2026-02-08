@@ -40,7 +40,6 @@ RUN uv pip install --system -e . && uv pip install --system pyinstaller
 
 RUN pyinstaller --onefile --name kloc-mapper \
     --collect-all src \
-    --collect-all protobuf \
     --clean \
     build_entry.py
 DOCKERFILE_EOF
@@ -81,7 +80,6 @@ build_macos() {
 
     pyinstaller --onefile --name kloc-mapper \
         --collect-all src \
-        --collect-all protobuf \
         --clean \
         build_entry.py
 

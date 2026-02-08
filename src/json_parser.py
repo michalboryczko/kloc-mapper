@@ -1,8 +1,8 @@
 """Unified JSON parser for kloc-mapper.
 
 Parses the unified JSON output from scip-php (version 4.0) into objects
-compatible with the protobuf-based SCIPMapper interface. This eliminates
-the need for scip_pb2.py protobuf parsing and archive.py ZIP extraction.
+compatible with the SCIPMapper interface. Provides lightweight attribute-access
+wrappers that duck-type the expected index structure.
 """
 
 import json
@@ -103,7 +103,7 @@ def parse_unified_json(filepath: str | Path) -> tuple[_Index, dict]:
     Returns:
         (index, calls_data) tuple where:
         - index: object with .metadata and .documents attributes,
-          duck-typing the protobuf scip_pb2.Index interface
+          duck-typing the expected SCIPMapper index interface
         - calls_data: dict with "calls" and "values" arrays
     """
     filepath = Path(filepath)

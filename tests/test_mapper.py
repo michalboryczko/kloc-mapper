@@ -1,25 +1,27 @@
-"""Integration tests for the SCIP mapper using fixed SCIP index."""
+"""Integration tests for the SCIP mapper using unified JSON input."""
 
 import json
 import pytest
 from pathlib import Path
 
 from src.mapper import SCIPMapper
+from src.json_parser import parse_unified_json
 from src.models import NodeKind, EdgeType
 
 
-SCIP_PATH = Path(__file__).parent.parent.parent / "artifacts" / "index_fixed.scip"
+JSON_PATH = Path(__file__).parent.parent.parent / "artifacts" / "index.json"
 
 pytestmark = pytest.mark.skipif(
-    not SCIP_PATH.exists(),
-    reason="artifacts/index_fixed.scip not found",
+    not JSON_PATH.exists(),
+    reason="artifacts/index.json not found",
 )
 
 
 @pytest.fixture(scope="module")
 def graph():
-    """Map the fixed SCIP file to a SoT graph."""
-    mapper = SCIPMapper(SCIP_PATH)
+    """Map the unified JSON file to a SoT graph."""
+    index, calls_data = parse_unified_json(JSON_PATH)
+    mapper = SCIPMapper(JSON_PATH, calls_data=calls_data, index=index)
     return mapper.map()
 
 

@@ -19,32 +19,23 @@ uv run kloc-mapper map --help
 ### CLI Usage
 
 ```bash
-# Map a .kloc archive to SoT JSON (includes calls.json data)
-uv run kloc-mapper map path/to/index.kloc -o output/sot.json
-
-# Map a plain .scip file to SoT JSON (without call graph data)
-uv run kloc-mapper map path/to/index.scip -o output/sot.json
+# Map unified JSON to SoT JSON
+uv run kloc-mapper map path/to/index.json -o output/sot.json
 
 # With pretty printing
-uv run kloc-mapper map path/to/index.kloc -o output/sot.json --pretty
+uv run kloc-mapper map path/to/index.json -o output/sot.json --pretty
 ```
 
 Options for `map` command:
-- `input` (positional, required) — path to input file (.kloc archive or .scip file)
-- `--out / -o` (required) — output path for SoT JSON
-- `--pretty / -p` — pretty-print the JSON output
+- `input` (positional, required) -- path to unified JSON input file (.json)
+- `--out / -o` (required) -- output path for SoT JSON
+- `--pretty / -p` -- pretty-print the JSON output
 
-### Input Formats
+### Input Format
 
-The mapper accepts two input formats:
+The mapper accepts **unified JSON** input (version 4.0) produced by scip-php. This is a single `.json` file containing SCIP index data and call graph data in one unified format.
 
-1. **.kloc archive** (ZIP file containing):
-   - `index.scip` — SCIP protobuf index (required)
-   - `calls.json` — call graph data from scip-php (optional)
-
-2. **.scip file** — plain SCIP protobuf index (no call graph data)
-
-When using .kloc archives, the output sot.json includes Value and Call nodes for detailed call tracking. With plain .scip files, only definition/reference nodes are created.
+Only `.json` files are accepted. Legacy `.kloc` and `.scip` formats are no longer supported.
 
 ### Output Format (sot.json v2.0)
 
@@ -66,9 +57,9 @@ uv run pytest tests/test_mapper.py -v
 
 ### Test structure
 
-- `tests/test_models.py` — **Unit tests** for data models (Node, Edge, Range, SoTGraph serialization, ID generation)
-- `tests/test_parser.py` — **Unit tests** for SCIP parsing utilities (symbol strings, ranges, FQN extraction, role bitmasks)
-- `tests/test_mapper.py` — **Integration tests** for the full SCIP-to-SoT mapping pipeline. Requires `artifacts/index_fixed.scip` (skipped if missing). Tests node creation, edge building, containment, inheritance, overrides, and deduplication.
+- `tests/test_models.py` -- **Unit tests** for data models (Node, Edge, Range, SoTGraph serialization, ID generation)
+- `tests/test_parser.py` -- **Unit tests** for SCIP parsing utilities (symbol strings, ranges, FQN extraction, role bitmasks)
+- `tests/test_mapper.py` -- **Integration tests** for the full JSON-to-SoT mapping pipeline. Requires `artifacts/index.json` (skipped if missing). Tests node creation, edge building, containment, inheritance, overrides, and deduplication.
 
 ## Building
 
@@ -95,7 +86,7 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml build_entry.py ./
 COPY src/ ./src/
 RUN uv pip install --system -e . && uv pip install --system pyinstaller
-RUN pyinstaller --onefile --name kloc-mapper --collect-all src --collect-all protobuf --clean build_entry.py
+RUN pyinstaller --onefile --name kloc-mapper --collect-all src --clean build_entry.py
 EOF
 
 docker create --name kloc-mapper-build kloc-mapper-builder-linux

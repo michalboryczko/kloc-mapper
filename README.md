@@ -1,10 +1,10 @@
 # kloc-mapper
 
-A tool that converts SCIP (Sourcegraph Code Intelligence Protocol) indexes into a Source-of-Truth (SoT) JSON graph representation. Part of the **KLOC (Knowledge of Code)** project, which provides rich code context for AI coding agents.
+A tool that converts unified JSON indexes (produced by scip-php) into a Source-of-Truth (SoT) JSON graph representation. Part of the **KLOC (Knowledge of Code)** project, which provides rich code context for AI coding agents.
 
 ## What it does
 
-kloc-mapper transforms SCIP protobuf data and call graph information into a unified graph format that represents:
+kloc-mapper transforms unified JSON data containing SCIP index and call graph information into a unified graph format that represents:
 
 - **Structural nodes**: Files, classes, interfaces, traits, enums, methods, functions, properties, constants, arguments
 - **Runtime nodes**: Values (parameters, locals, results) and Calls (method calls, property accesses, constructors)
@@ -30,41 +30,30 @@ pip install -e .
 ## Usage
 
 ```bash
-# From .kloc archive (includes call graph data)
-kloc-mapper map project.kloc --out sot.json
-
-# From plain .scip file (structural data only)
-kloc-mapper map index.scip --out sot.json
+# Map unified JSON to SoT JSON
+kloc-mapper map index.json --out sot.json
 
 # With pretty-printed output
-kloc-mapper map project.kloc --out sot.json --pretty
+kloc-mapper map index.json --out sot.json --pretty
 ```
 
 ### CLI Options
 
 | Option | Short | Description |
 |--------|-------|-------------|
-| `input` | | Path to input file: .kloc archive or .scip file (required, positional) |
+| `input` | | Path to unified JSON input file (.json, required, positional) |
 | `--out` | `-o` | Output path for SoT JSON (required) |
 | `--pretty` | `-p` | Pretty-print JSON output |
 
-## Input Formats
+## Input Format
 
-### .kloc Archive (Recommended)
+### Unified JSON (version 4.0)
 
-A ZIP file containing both structural and call graph data:
+A single `.json` file produced by scip-php containing both SCIP index data and call graph data in one unified format. This is the only supported input format.
 
-```
-project.kloc
-├── index.scip       # SCIP protobuf index (required)
-└── calls.json       # Call graph data (optional)
-```
-
-When processing a .kloc archive with calls.json, the output includes Value and Call nodes for detailed call tracking.
-
-### .scip File
-
-Plain SCIP protobuf index. Produces a graph with structural nodes only (no Value/Call nodes).
+The unified JSON includes:
+- SCIP index data (documents, symbols, occurrences, relationships)
+- Call graph data (values, calls, receivers, arguments)
 
 ## Output Format (sot.json v2.0)
 
@@ -122,7 +111,7 @@ The SoT JSON contains nodes and edges representing the complete code graph:
 
 | Type | Description |
 |------|-------------|
-| `contains` | Structural containment (File→Class, Class→Method, Method→Call) |
+| `contains` | Structural containment (File->Class, Class->Method, Method->Call) |
 | `extends` | Class/interface inheritance |
 | `implements` | Interface implementation |
 | `uses_trait` | Trait usage |
@@ -139,23 +128,21 @@ The SoT JSON contains nodes and edges representing the complete code graph:
 ## How it works
 
 ```
-Input (.kloc or .scip)
-       │
-       ├─→ Load archive/file
-       ├─→ Parse SCIP protobuf
-       ├─→ Extract symbols and documentation
-       ├─→ Create structural nodes (files, classes, methods, etc.)
-       ├─→ Estimate missing range data
-       ├─→ Build spatial index for fast lookups
-       ├─→ Build structural edges (contains, inheritance, uses, overrides)
-       │
-       └─→ If calls.json present:
-           ├─→ Create Value nodes (parameters, locals, results)
-           ├─→ Create Call nodes (method calls, property accesses)
-           ├─→ Build call edges (calls, receiver, argument, produces)
-           └─→ Build type edges (type_of)
-       │
-       ▼
+Input (unified JSON)
+       |
+       +-> Parse unified JSON (index + calls data)
+       +-> Extract symbols and documentation
+       +-> Create structural nodes (files, classes, methods, etc.)
+       +-> Build spatial index for fast lookups
+       +-> Build structural edges (contains, inheritance, uses, overrides)
+       |
+       +-> If calls data present:
+           +-> Create Value nodes (parameters, locals, results)
+           +-> Create Call nodes (method calls, property accesses)
+           +-> Build call edges (calls, receiver, argument, produces)
+           +-> Build type edges (type_of)
+       |
+       v
 SoT JSON v2.0 (unified graph)
 ```
 
@@ -184,28 +171,12 @@ Detects platform and builds appropriate binary:
 
 ```
 src/
-├── cli.py           # Command-line interface
-├── models.py        # Data structures (Node, Edge, SoTGraph)
-├── parser.py        # SCIP protobuf parsing utilities
-├── mapper.py        # Core SCIP-to-SoT mapping logic
-├── archive.py       # .kloc archive loader
-├── calls_mapper.py  # Calls.json to Value/Call nodes
-└── scip_pb2.py      # Pre-generated protobuf bindings for SCIP format
-```
-
-### Regenerating scip_pb2.py
-
-The `scip_pb2.py` file is pre-generated from the [SCIP protocol definition](https://github.com/sourcegraph/scip). To regenerate it (e.g., after a SCIP schema update):
-
-```bash
-# Download the latest scip.proto
-curl -o scip.proto https://raw.githubusercontent.com/sourcegraph/scip/main/scip.proto
-
-# Generate Python bindings
-protoc --python_out=src scip.proto
-
-# Clean up
-rm scip.proto
++-- cli.py           # Command-line interface
++-- models.py        # Data structures (Node, Edge, SoTGraph)
++-- parser.py        # SCIP symbol parsing utilities
++-- mapper.py        # Core JSON-to-SoT mapping logic
++-- json_parser.py   # Unified JSON parser (version 4.0)
++-- calls_mapper.py  # Calls data to Value/Call nodes
 ```
 
 ## Related Projects
