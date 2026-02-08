@@ -141,8 +141,8 @@ class SCIPMapper:
         if re.search(r'\.\(\$?[a-zA-Z_][a-zA-Z0-9_]*\)', descriptor):
             return NodeKind.ARGUMENT
 
-        # Method: ends with ().)
-        if descriptor.endswith("()."):
+        # Method: ends with ().) and has # (class member indicator)
+        if descriptor.endswith("().") and "#" in descriptor:
             return NodeKind.METHOD
 
         # Property: contains #$
@@ -175,8 +175,8 @@ class SCIPMapper:
                         return NodeKind.ENUM_CASE
                 return NodeKind.CONST
 
-        # Standalone function: ends with ().
-        if descriptor.endswith("().") and "#" not in descriptor:
+        # Standalone function: ends with (). (without # — no class membership)
+        if descriptor.endswith("()."):
             return NodeKind.FUNCTION
 
         return None
