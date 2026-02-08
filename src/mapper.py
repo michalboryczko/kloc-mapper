@@ -12,7 +12,7 @@ from src.models import (
     generate_node_id, generate_file_node_id
 )
 from src.parser import (
-    parse_scip_file, parse_symbol_string, parse_range,
+    parse_symbol_string, parse_range,
     extract_fqn_from_descriptor, extract_name_from_descriptor,
     get_symbol_roles, is_definition,
     infer_kind_from_documentation,
@@ -27,13 +27,14 @@ class SCIPMapper:
         """Initialize the mapper.
 
         Args:
-            scip_path: Path to the SCIP index file (used for protobuf parsing if index not provided).
-            calls_data: Optional calls.json data dict for Value/Call node generation.
-            index: Optional pre-parsed index object (duck-typed protobuf interface).
-                   If provided, scip_path is used only for metadata (no file parsing).
+            scip_path: Path to the input file (used for metadata only).
+            calls_data: Optional calls data dict for Value/Call node generation.
+            index: Pre-parsed index object (from json_parser.parse_unified_json).
         """
         self.scip_path = Path(scip_path)
-        self.index = index if index is not None else parse_scip_file(self.scip_path)
+        if index is None:
+            raise ValueError("index parameter is required. Use json_parser.parse_unified_json() to parse input.")
+        self.index = index
         self.calls_data = calls_data
 
         # Internal mappings
