@@ -23,15 +23,17 @@ from src.parser import (
 class SCIPMapper:
     """Maps SCIP index to Source-of-Truth graph."""
 
-    def __init__(self, scip_path: str | Path, calls_data: Optional[dict] = None):
+    def __init__(self, scip_path: str | Path, calls_data: Optional[dict] = None, index=None):
         """Initialize the mapper.
 
         Args:
-            scip_path: Path to the SCIP index file.
+            scip_path: Path to the SCIP index file (used for protobuf parsing if index not provided).
             calls_data: Optional calls.json data dict for Value/Call node generation.
+            index: Optional pre-parsed index object (duck-typed protobuf interface).
+                   If provided, scip_path is used only for metadata (no file parsing).
         """
         self.scip_path = Path(scip_path)
-        self.index = parse_scip_file(self.scip_path)
+        self.index = index if index is not None else parse_scip_file(self.scip_path)
         self.calls_data = calls_data
 
         # Internal mappings

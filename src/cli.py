@@ -20,7 +20,7 @@ def main():
     map_parser = subparsers.add_parser("map", help="Map SCIP/kloc to SoT JSON")
     map_parser.add_argument(
         "input",
-        help="Path to input file (.kloc archive or .scip file)"
+        help="Path to input file (.kloc archive, .scip file, or unified .json)"
     )
     map_parser.add_argument(
         "--out", "-o",
@@ -76,7 +76,9 @@ def cmd_map(args):
     # Determine input type by extension
     suffix = input_path.suffix.lower()
 
-    if suffix == ".kloc":
+    if suffix == ".json":
+        cmd_map_json(input_path, out_path, args.pretty)
+    elif suffix == ".kloc":
         cmd_map_kloc(input_path, out_path, args.pretty)
     elif suffix == ".scip":
         cmd_map_scip(input_path, out_path, args.pretty)
@@ -107,6 +109,46 @@ def cmd_map_scip(scip_path: Path, out_path: Path, pretty: bool):
     print(f"Written to {out_path}", file=sys.stderr)
     print(f"  Version: {graph.version}", file=sys.stderr)
     print(f"  Nodes: {len(graph.nodes)}", file=sys.stderr)
+    print(f"  Edges: {len(graph.edges)}", file=sys.stderr)
+
+
+def cmd_map_json(json_path: Path, out_path: Path, pretty: bool):
+    """Map a unified JSON file to SoT JSON."""
+    import json as json_module
+    from src.json_parser import parse_unified_json
+
+    print(f"Loading unified JSON {json_path}...", file=sys.stderr)
+
+    try:
+        # Validate version before parsing
+        with open(json_path, "r") as f:
+            raw_data = json_module.load(f)
+        validate_input_version(raw_data)
+    except json_module.JSONDecodeError as e:
+        print(f"Error: Invalid JSON in {json_path}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    index, calls_data = parse_unified_json(json_path)
+
+    print(f"Mapping to SoT JSON...", file=sys.stderr)
+
+    mapper = SCIPMapper(json_path, calls_data=calls_data, index=index)
+    graph = mapper.map()
+
+    indent = 2 if pretty else None
+    json_output = graph.to_json(indent=indent)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w") as f:
+        f.write(json_output)
+
+    # Count node types
+    value_count = sum(1 for n in graph.nodes if n.kind.value == "Value")
+    call_count = sum(1 for n in graph.nodes if n.kind.value == "Call")
+
+    print(f"Written to {out_path}", file=sys.stderr)
+    print(f"  Version: {graph.version}", file=sys.stderr)
+    print(f"  Nodes: {len(graph.nodes)} (including {value_count} Value, {call_count} Call)", file=sys.stderr)
     print(f"  Edges: {len(graph.edges)}", file=sys.stderr)
 
 
