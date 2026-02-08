@@ -4,10 +4,11 @@ A tool that converts SCIP (Sourcegraph Code Intelligence Protocol) indexes into 
 
 ## What it does
 
-kloc-mapper transforms low-level SCIP protobuf data into a higher-level graph format that clearly represents:
+kloc-mapper transforms SCIP protobuf data and call graph information into a unified graph format that represents:
 
-- **Nodes**: Files, classes, interfaces, traits, enums, methods, functions, properties, constants, and arguments
-- **Edges**: Structural relationships (`contains`), inheritance (`extends`, `implements`, `uses_trait`), method overrides (`overrides`), and usage dependencies (`uses`)
+- **Structural nodes**: Files, classes, interfaces, traits, enums, methods, functions, properties, constants, arguments
+- **Runtime nodes**: Values (parameters, locals, results) and Calls (method calls, property accesses, constructors)
+- **Edges**: Structural relationships, inheritance, usage dependencies, call relationships, and type information
 
 ## Installation
 
@@ -29,31 +30,64 @@ pip install -e .
 ## Usage
 
 ```bash
-# Basic usage
-kloc-mapper map --scip <path-to-scip.index> --out <output.json>
+# From .kloc archive (includes call graph data)
+kloc-mapper map project.kloc --out sot.json
+
+# From plain .scip file (structural data only)
+kloc-mapper map index.scip --out sot.json
 
 # With pretty-printed output
-kloc-mapper map -s artifacts/scip.index -o artifacts/sot.json --pretty
+kloc-mapper map project.kloc --out sot.json --pretty
 ```
 
 ### CLI Options
 
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--scip` | `-s` | Path to SCIP index file (required) |
+| `input` | | Path to input file: .kloc archive or .scip file (required, positional) |
 | `--out` | `-o` | Output path for SoT JSON (required) |
 | `--pretty` | `-p` | Pretty-print JSON output |
 
-## Output Format
+## Input Formats
 
-The SoT JSON contains two main arrays:
+### .kloc Archive (Recommended)
 
-### Nodes
+A ZIP file containing both structural and call graph data:
+
+```
+project.kloc
+├── index.scip       # SCIP protobuf index (required)
+└── calls.json       # Call graph data (optional)
+```
+
+When processing a .kloc archive with calls.json, the output includes Value and Call nodes for detailed call tracking.
+
+### .scip File
+
+Plain SCIP protobuf index. Produces a graph with structural nodes only (no Value/Call nodes).
+
+## Output Format (sot.json v2.0)
+
+The SoT JSON contains nodes and edges representing the complete code graph:
+
+```json
+{
+  "version": "2.0",
+  "metadata": {
+    "generated_at": "2026-02-05T12:00:00Z",
+    "project_root": "/path/to/project"
+  },
+  "nodes": [...],
+  "edges": [...]
+}
+```
+
+### Node Example
 
 ```json
 {
   "id": "abc123",
-  "kind": "METHOD",
+  "kind": "Method",
   "name": "getUserId",
   "fqn": "App\\Service\\User::getUserId()",
   "symbol": "scip-php composer ... App/Service/User#getUserId().",
@@ -68,58 +102,62 @@ The SoT JSON contains two main arrays:
 }
 ```
 
-### Edges
+### Edge Example
 
 ```json
 {
-  "type": "uses",
-  "source": "abc123",
-  "target": "def456",
-  "location": {
-    "file": "src/Service/User.php",
-    "line": 45,
-    "col": 12
-  }
+  "type": "calls",
+  "source": "node:call:123",
+  "target": "node:method:456"
 }
 ```
 
 ### Node Kinds
 
-`FILE`, `CLASS`, `INTERFACE`, `TRAIT`, `ENUM`, `METHOD`, `FUNCTION`, `PROPERTY`, `CONST`, `ARGUMENT`, `ENUM_CASE`
+**Structural nodes**: `File`, `Class`, `Interface`, `Trait`, `Enum`, `Method`, `Function`, `Property`, `Const`, `Argument`, `EnumCase`
+
+**Runtime nodes**: `Value`, `Call`
 
 ### Edge Types
 
 | Type | Description |
 |------|-------------|
-| `contains` | Structural containment (File→Class, Class→Method) |
+| `contains` | Structural containment (File→Class, Class→Method, Method→Call) |
 | `extends` | Class/interface inheritance |
 | `implements` | Interface implementation |
 | `uses_trait` | Trait usage |
 | `overrides` | Method override |
 | `uses` | Direct reference (calls, type hints, instantiation) |
+| `type_hint` | Type annotation reference |
+| `calls` | Call site to target method/property/constructor |
+| `receiver` | Call to receiver value (object being called on) |
+| `argument` | Call to argument value (with position) |
+| `produces` | Call to result value |
+| `assigned_from` | Value assignment source |
+| `type_of` | Value to its runtime type |
 
 ## How it works
 
 ```
-SCIP Index (.scip)
+Input (.kloc or .scip)
        │
-       ├─→ Parse protobuf
+       ├─→ Load archive/file
+       ├─→ Parse SCIP protobuf
        ├─→ Extract symbols and documentation
-       ├─→ Create nodes (files, classes, methods, etc.)
+       ├─→ Create structural nodes (files, classes, methods, etc.)
        ├─→ Estimate missing range data
        ├─→ Build spatial index for fast lookups
-       ├─→ Build edges (contains, inheritance, uses, overrides)
+       ├─→ Build structural edges (contains, inheritance, uses, overrides)
+       │
+       └─→ If calls.json present:
+           ├─→ Create Value nodes (parameters, locals, results)
+           ├─→ Create Call nodes (method calls, property accesses)
+           ├─→ Build call edges (calls, receiver, argument, produces)
+           └─→ Build type edges (type_of)
        │
        ▼
-SoT JSON (nodes + edges)
+SoT JSON v2.0 (unified graph)
 ```
-
-The mapper uses a multi-phase pipeline to:
-1. Collect symbol metadata and documentation
-2. Create nodes for all symbols
-3. Estimate missing end-line data using sibling positions
-4. Build a spatial index for efficient enclosing symbol lookup
-5. Build structural, inheritance, and usage edges
 
 ## Development
 
@@ -146,11 +184,13 @@ Detects platform and builds appropriate binary:
 
 ```
 src/
-├── cli.py        # Command-line interface
-├── models.py     # Data structures (Node, Edge, SoTGraph)
-├── parser.py     # SCIP protobuf parsing utilities
-├── mapper.py     # Core SCIP-to-SoT mapping logic
-└── scip_pb2.py   # Pre-generated protobuf bindings for SCIP format
+├── cli.py           # Command-line interface
+├── models.py        # Data structures (Node, Edge, SoTGraph)
+├── parser.py        # SCIP protobuf parsing utilities
+├── mapper.py        # Core SCIP-to-SoT mapping logic
+├── archive.py       # .kloc archive loader
+├── calls_mapper.py  # Calls.json to Value/Call nodes
+└── scip_pb2.py      # Pre-generated protobuf bindings for SCIP format
 ```
 
 ### Regenerating scip_pb2.py

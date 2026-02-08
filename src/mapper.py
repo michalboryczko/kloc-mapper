@@ -1,5 +1,6 @@
 """SCIP to Source-of-Truth JSON mapper."""
 
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -14,7 +15,7 @@ from src.parser import (
     parse_scip_file, parse_symbol_string, parse_range,
     extract_fqn_from_descriptor, extract_name_from_descriptor,
     get_symbol_roles, is_definition,
-    infer_kind_from_documentation, extract_extends_implements_from_docs,
+    infer_kind_from_documentation,
     get_parent_symbol
 )
 
@@ -22,9 +23,16 @@ from src.parser import (
 class SCIPMapper:
     """Maps SCIP index to Source-of-Truth graph."""
 
-    def __init__(self, scip_path: str | Path):
+    def __init__(self, scip_path: str | Path, calls_data: Optional[dict] = None):
+        """Initialize the mapper.
+
+        Args:
+            scip_path: Path to the SCIP index file.
+            calls_data: Optional calls.json data dict for Value/Call node generation.
+        """
         self.scip_path = Path(scip_path)
         self.index = parse_scip_file(self.scip_path)
+        self.calls_data = calls_data
 
         # Internal mappings
         self.nodes: dict[str, Node] = {}  # node_id -> Node
@@ -36,7 +44,7 @@ class SCIPMapper:
         self.symbol_metadata: dict[str, dict] = {}  # symbol -> {docs, relationships}
 
         # Track occurrences for uses edges
-        self.occurrences: list[dict] = []  # [{symbol, file, range, roles, enclosing_symbol}]
+        self.occurrences: list[dict] = []  # [{symbol, file, range, roles, is_definition}]
 
         # Spatial index: file -> sorted list of (start_line, end_line, symbol, node_kind)
         self.file_symbol_index: dict[str, list[tuple[int, int, str, NodeKind]]] = {}
@@ -46,15 +54,19 @@ class SCIPMapper:
         self._collect_symbol_metadata()
         self._create_file_nodes()
         self._create_symbol_nodes()
-        self._estimate_symbol_ranges()  # NEW: Fill missing end_lines
-        self._build_file_symbol_index()  # NEW: Build spatial index
+        self._build_file_symbol_index()
         self._build_contains_edges()
         self._build_inheritance_edges()
+        self._build_type_hint_edges()
         self._build_uses_edges()
         self._build_override_edges()
 
+        # Process calls.json data if available
+        if self.calls_data:
+            self._process_calls_data()
+
         return SoTGraph(
-            version="1.0",
+            version="2.0",
             metadata={
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "source_scip": str(self.scip_path.name),
@@ -63,6 +75,21 @@ class SCIPMapper:
             nodes=list(self.nodes.values()),
             edges=self.edges,
         )
+
+    def _process_calls_data(self):
+        """Process calls.json data to create Value and Call nodes.
+
+        Delegates to the calls_mapper module.
+        """
+        from src.calls_mapper import CallsMapper
+        calls_mapper = CallsMapper(
+            calls_data=self.calls_data,
+            nodes=self.nodes,
+            edges=self.edges,
+            symbol_to_node_id=self.symbol_to_node_id,
+            file_symbol_index=self.file_symbol_index,
+        )
+        calls_mapper.process()
 
     def _collect_symbol_metadata(self):
         """Collect documentation and relationships from doc.symbols."""
@@ -157,7 +184,8 @@ class SCIPMapper:
     def _create_symbol_nodes(self):
         """Create nodes for all symbols in the SCIP index."""
         # First pass: collect all definitions from occurrences
-        definition_locations: dict[str, tuple[str, list[int]]] = {}  # symbol -> (file, range)
+        # symbol -> (file, range, enclosing_range)
+        definition_locations: dict[str, tuple[str, list[int], list[int]]] = {}
 
         for doc in self.index.documents:
             filepath = doc.relative_path
@@ -176,9 +204,10 @@ class SCIPMapper:
                     "is_definition": is_definition(occ.symbol_roles),
                 })
 
-                # Record definition location
+                # Record definition location with enclosing_range
                 if is_definition(occ.symbol_roles):
-                    definition_locations[symbol] = (filepath, range_list)
+                    enclosing = list(occ.enclosing_range) if occ.enclosing_range else []
+                    definition_locations[symbol] = (filepath, range_list, enclosing)
 
         # Second pass: create nodes
         all_symbols = set(definition_locations.keys()) | set(self.symbol_metadata.keys())
@@ -199,12 +228,18 @@ class SCIPMapper:
             # Get location
             loc = definition_locations.get(symbol)
             if loc:
-                filepath, range_list = loc
+                filepath, range_list, enclosing_list = loc
                 start_line, start_col, end_line, end_col = parse_range(range_list)
                 range_obj = Range(start_line, start_col, end_line, end_col)
+                if enclosing_list:
+                    es, esc, ee, eec = parse_range(enclosing_list)
+                    enclosing_obj = Range(es, esc, ee, eec)
+                else:
+                    enclosing_obj = None
             else:
                 filepath = meta.get("file")
                 range_obj = None
+                enclosing_obj = None
 
             node_id = generate_node_id(symbol)
             node = Node(
@@ -215,85 +250,40 @@ class SCIPMapper:
                 symbol=symbol,
                 file=filepath,
                 range=range_obj,
+                enclosing_range=enclosing_obj,
                 documentation=docs,
             )
 
             self.nodes[node_id] = node
             self.symbol_to_node_id[symbol] = node_id
 
-    def _estimate_symbol_ranges(self):
-        """Estimate end_line for symbols with incomplete range data.
-
-        SCIP often provides ranges that only cover the definition line (signature),
-        not the entire body. We estimate end_line based on:
-        1. The next sibling symbol's start_line - 1
-        2. A large default if no sibling exists
-        """
-        from collections import defaultdict
-
-        # Group symbols by file and parent
-        # Key: (filepath, parent_symbol), Value: list of (start_line, symbol)
-        symbols_by_context: dict[tuple[str, Optional[str]], list[tuple[int, str]]] = defaultdict(list)
-
-        for symbol, node_id in self.symbol_to_node_id.items():
-            node = self.nodes[node_id]
-            if not node.file or not node.range:
-                continue
-
-            parent_symbol = get_parent_symbol(symbol)
-            key = (node.file, parent_symbol)
-            symbols_by_context[key].append((node.range.start_line, symbol))
-
-        # For each context, sort by start_line and estimate end_lines
-        for key, symbols in symbols_by_context.items():
-            symbols.sort(key=lambda x: x[0])
-
-            for i, (start_line, symbol) in enumerate(symbols):
-                node = self.nodes[self.symbol_to_node_id[symbol]]
-                if not node.range:
-                    continue
-
-                # If end_line equals start_line (common in SCIP), estimate it
-                if node.range.end_line <= node.range.start_line:
-                    if i + 1 < len(symbols):
-                        # Next sibling starts at next_start, so this ends at next_start - 1
-                        next_start = symbols[i + 1][0]
-                        node.range.end_line = max(next_start - 1, node.range.start_line)
-                    else:
-                        # Last symbol in context - estimate based on kind
-                        if node.kind in (NodeKind.METHOD, NodeKind.FUNCTION):
-                            # Methods typically 20-50 lines
-                            node.range.end_line = node.range.start_line + 50
-                        elif node.kind in (NodeKind.CLASS, NodeKind.INTERFACE, NodeKind.TRAIT, NodeKind.ENUM):
-                            # Classes can be much larger
-                            node.range.end_line = node.range.start_line + 500
-                        else:
-                            # Properties, consts - small
-                            node.range.end_line = node.range.start_line + 5
-
     def _build_file_symbol_index(self):
-        """Build spatial index for fast enclosing symbol lookup."""
-        from collections import defaultdict
+        """Build spatial index for fast enclosing symbol lookup.
 
+        Uses enclosing_range (full AST extent) when available for accurate
+        containment. Falls back to range (identifier position) otherwise.
+        """
         file_symbols: dict[str, list[tuple[int, int, str, NodeKind]]] = defaultdict(list)
 
         for symbol, node_id in self.symbol_to_node_id.items():
             node = self.nodes[node_id]
 
-            # Only index container types that can have uses inside them
+            # Only index container types that can enclose references
             if node.kind not in (
                 NodeKind.METHOD, NodeKind.FUNCTION,
                 NodeKind.CLASS, NodeKind.INTERFACE, NodeKind.TRAIT, NodeKind.ENUM,
-                NodeKind.PROPERTY
             ):
                 continue
 
             if not node.file or not node.range:
                 continue
 
+            # Prefer enclosing_range for containment (covers full AST body),
+            # fall back to range (identifier position only)
+            r = node.enclosing_range or node.range
             file_symbols[node.file].append((
-                node.range.start_line,
-                node.range.end_line,
+                r.start_line,
+                r.end_line,
                 symbol,
                 node.kind
             ))
@@ -356,62 +346,82 @@ class SCIPMapper:
         return None
 
     def _build_inheritance_edges(self):
-        """Build extends, implements, and uses_trait edges."""
+        """Build extends, implements, and uses_trait edges from SCIP relationships.
+
+        Uses structured relationship data from SCIP symbol metadata instead of
+        parsing PHPDoc documentation strings.
+        """
         for symbol, meta in self.symbol_metadata.items():
             source_id = self.symbol_to_node_id.get(symbol)
             if not source_id:
                 continue
 
-            docs = meta.get("documentation", [])
-            scip_rels = meta.get("relationships", [])
+            node = self.nodes.get(source_id)
+            if not node:
+                continue
 
-            # Parse extends/implements from documentation
-            extends_list, implements_list, uses_traits = extract_extends_implements_from_docs(docs)
+            # Only process class-like symbols for inheritance
+            if node.kind not in (NodeKind.CLASS, NodeKind.INTERFACE, NodeKind.TRAIT, NodeKind.ENUM):
+                continue
 
-            # Build lookup of relationship symbols by short name
-            rel_by_short_name: dict[str, str] = {}
-            for rel in scip_rels:
-                rel_sym = rel["symbol"]
-                parsed = parse_symbol_string(rel_sym)
-                if "descriptor" in parsed:
-                    short = parsed["descriptor"].rstrip("#").split("/")[-1]
-                    rel_by_short_name[short] = rel_sym
+            for rel in meta.get("relationships", []):
+                # Skip type_definition relationships (parameter/property types)
+                if rel.get("is_type_definition"):
+                    continue
 
-            # Process extends
-            for ext in extends_list:
-                short_name = ext.split("/")[-1]
-                target_symbol = rel_by_short_name.get(short_name, ext)
+                target_symbol = rel["symbol"]
                 target_id = self._resolve_relationship_target(target_symbol)
-                if target_id:
-                    self.edges.append(Edge(
-                        type=EdgeType.EXTENDS,
-                        source=source_id,
-                        target=target_id,
-                    ))
+                if not target_id:
+                    continue
 
-            # Process implements
-            for impl in implements_list:
-                short_name = impl.split("/")[-1]
-                target_symbol = rel_by_short_name.get(short_name, impl)
-                target_id = self._resolve_relationship_target(target_symbol)
-                if target_id:
-                    self.edges.append(Edge(
-                        type=EdgeType.IMPLEMENTS,
-                        source=source_id,
-                        target=target_id,
-                    ))
+                if rel.get("is_implementation") and not rel.get("is_reference"):
+                    # implements interface
+                    edge_type = EdgeType.IMPLEMENTS
+                elif rel.get("is_reference") and rel.get("is_implementation"):
+                    # uses trait
+                    edge_type = EdgeType.USES_TRAIT
+                elif rel.get("is_reference") and not rel.get("is_implementation"):
+                    # extends class/interface
+                    edge_type = EdgeType.EXTENDS
+                else:
+                    continue
 
-            # Process trait usage
-            for trait in uses_traits:
-                short_name = trait.split("/")[-1]
-                target_symbol = rel_by_short_name.get(short_name, trait)
+                self.edges.append(Edge(type=edge_type, source=source_id, target=target_id))
+
+    def _build_type_hint_edges(self):
+        """Build type_hint edges from SCIP relationships.
+
+        Type hints connect elements (parameters, properties, methods) to their type annotations.
+        These come from SCIP relationships with is_type_definition=True.
+        """
+        for symbol, meta in self.symbol_metadata.items():
+            source_id = self.symbol_to_node_id.get(symbol)
+            if not source_id:
+                continue
+
+            node = self.nodes.get(source_id)
+            if not node:
+                continue
+
+            # Type hints apply to: Argument (parameters), Property, Method (return type)
+            if node.kind not in (NodeKind.ARGUMENT, NodeKind.PROPERTY, NodeKind.METHOD):
+                continue
+
+            for rel in meta.get("relationships", []):
+                # Only process type_definition relationships
+                if not rel.get("is_type_definition"):
+                    continue
+
+                target_symbol = rel["symbol"]
                 target_id = self._resolve_relationship_target(target_symbol)
-                if target_id:
-                    self.edges.append(Edge(
-                        type=EdgeType.USES_TRAIT,
-                        source=source_id,
-                        target=target_id,
-                    ))
+                if not target_id:
+                    continue
+
+                self.edges.append(Edge(
+                    type=EdgeType.TYPE_HINT,
+                    source=source_id,
+                    target=target_id,
+                ))
 
     def _find_enclosing_symbol(self, filepath: str, line: int) -> Optional[str]:
         """Find the enclosing symbol (method/function/class) for a given location.
@@ -423,24 +433,30 @@ class SCIPMapper:
         if not entries:
             return None
 
-        candidates: list[tuple[int, int, str, NodeKind]] = []
+        best = None
+        best_span = float("inf")
+        best_priority = float("inf")
 
         for start_line, end_line, symbol, kind in entries:
             if start_line <= line <= end_line:
                 span = end_line - start_line
-                # Priority: smaller span is better, methods/functions preferred over classes
-                kind_priority = 0 if kind in (NodeKind.METHOD, NodeKind.FUNCTION, NodeKind.PROPERTY) else 1
-                candidates.append((span, kind_priority, symbol, kind))
+                priority = 0 if kind in (NodeKind.METHOD, NodeKind.FUNCTION) else 1
+                if (span, priority) < (best_span, best_priority):
+                    best = symbol
+                    best_span = span
+                    best_priority = priority
 
-        if not candidates:
-            return None
-
-        # Sort by span (smaller is better), then by kind priority (methods first)
-        candidates.sort(key=lambda x: (x[0], x[1]))
-        return candidates[0][2]
+        return best
 
     def _build_uses_edges(self):
-        """Build uses edges from occurrences."""
+        """Build uses edges from occurrences.
+
+        Deduplicates by (source_id, target_id) pair - multiple references from
+        the same source to the same target produce only one USES edge.
+        Filters out parameter self-references (method USES its own parameter).
+        """
+        seen_edges: set[tuple[str, str]] = set()
+
         for occ in self.occurrences:
             # Skip definitions - they don't create uses edges
             if occ["is_definition"]:
@@ -470,6 +486,17 @@ class SCIPMapper:
             if source_id == target_id:
                 continue
 
+            # Filter parameter self-references: skip if target is a parameter
+            # of the enclosing method (e.g. method USES its own $param)
+            if enclosing_symbol and target_symbol.startswith(enclosing_symbol):
+                continue
+
+            # Deduplicate by (source, target) pair
+            edge_key = (source_id, target_id)
+            if edge_key in seen_edges:
+                continue
+            seen_edges.add(edge_key)
+
             start_line, start_col, _, _ = parse_range(range_list)
             location = Location(file=filepath, line=start_line, col=start_col)
 
@@ -481,52 +508,26 @@ class SCIPMapper:
             ))
 
     def _build_override_edges(self):
-        """Build overrides edges for methods that override parent methods."""
-        # Collect all methods grouped by class
-        methods_by_class: dict[str, dict[str, str]] = {}  # class_symbol -> {method_name -> method_symbol}
+        """Build overrides edges from SCIP relationship data.
 
-        for symbol, node_id in self.symbol_to_node_id.items():
-            node = self.nodes[node_id]
-            if node.kind != NodeKind.METHOD:
+        Method symbols with relationships where is_implementation=true and
+        is_reference=true indicate the method overrides/implements a parent method.
+        """
+        for symbol, meta in self.symbol_metadata.items():
+            source_id = self.symbol_to_node_id.get(symbol)
+            if not source_id:
                 continue
 
-            parent_symbol = get_parent_symbol(symbol)
-            if parent_symbol:
-                if parent_symbol not in methods_by_class:
-                    methods_by_class[parent_symbol] = {}
-                methods_by_class[parent_symbol][node.name] = symbol
-
-        # Build extends chain for each class
-        class_parents: dict[str, str] = {}  # class_symbol -> parent_class_symbol
-        for source_id, edge_type, target_id in [(e.source, e.type, e.target) for e in self.edges]:
-            if edge_type == EdgeType.EXTENDS:
-                # Find symbols from node IDs
-                source_symbol = None
-                target_symbol = None
-                for sym, nid in self.symbol_to_node_id.items():
-                    if nid == source_id:
-                        source_symbol = sym
-                    if nid == target_id:
-                        target_symbol = sym
-                if source_symbol and target_symbol:
-                    class_parents[source_symbol] = target_symbol
-
-        # For each method, check if parent class has same method
-        for class_symbol, methods in methods_by_class.items():
-            parent_class = class_parents.get(class_symbol)
-            if not parent_class:
+            # Only process method symbols
+            node = self.nodes.get(source_id)
+            if not node or node.kind != NodeKind.METHOD:
                 continue
 
-            parent_methods = methods_by_class.get(parent_class, {})
-
-            for method_name, method_symbol in methods.items():
-                if method_name in parent_methods:
-                    parent_method_symbol = parent_methods[method_name]
-
-                    source_id = self.symbol_to_node_id.get(method_symbol)
-                    target_id = self.symbol_to_node_id.get(parent_method_symbol)
-
-                    if source_id and target_id:
+            for rel in meta.get("relationships", []):
+                if rel.get("is_implementation") and rel.get("is_reference"):
+                    target_symbol = rel["symbol"]
+                    target_id = self._resolve_relationship_target(target_symbol)
+                    if target_id:
                         self.edges.append(Edge(
                             type=EdgeType.OVERRIDES,
                             source=source_id,

@@ -9,6 +9,7 @@ import json
 
 class NodeKind(str, Enum):
     """Types of nodes in the SoT graph."""
+    # Structural nodes (from SCIP index)
     FILE = "File"
     CLASS = "Class"
     INTERFACE = "Interface"
@@ -21,15 +22,33 @@ class NodeKind(str, Enum):
     ARGUMENT = "Argument"
     ENUM_CASE = "EnumCase"
 
+    # Runtime entities (from calls.json)
+    VALUE = "Value"      # Runtime value: parameter, local, result, literal, constant
+    CALL = "Call"        # Call site: method call, property access, constructor, etc.
+
 
 class EdgeType(str, Enum):
     """Types of edges in the SoT graph."""
+    # Structural edges (from SCIP index)
     CONTAINS = "contains"
     EXTENDS = "extends"
     IMPLEMENTS = "implements"
     USES_TRAIT = "uses_trait"
     OVERRIDES = "overrides"
     USES = "uses"
+
+    # Type reference edges
+    TYPE_HINT = "type_hint"        # Type annotation -> Class/Interface
+
+    # Call relationship edges (from calls.json)
+    CALLS = "calls"                # Call -> Method/Function/Property/Constructor
+    RECEIVER = "receiver"          # Call -> Value (object being called on)
+    ARGUMENT = "argument"          # Call -> Value (value passed as argument)
+
+    # Value relationship edges (from calls.json)
+    PRODUCES = "produces"          # Call -> Value (result of call)
+    ASSIGNED_FROM = "assigned_from"  # Value -> Value (assignment source)
+    TYPE_OF = "type_of"            # Value -> Class/Interface (runtime type)
 
 
 @dataclass
@@ -65,7 +84,15 @@ class Node:
     symbol: str
     file: Optional[str]
     range: Optional[Range]
+    enclosing_range: Optional[Range] = None
     documentation: list[str] = field(default_factory=list)
+
+    # Value node fields (only set when kind == VALUE)
+    value_kind: Optional[str] = None    # "parameter", "local", "result", "literal", "constant"
+    type_symbol: Optional[str] = None   # SCIP symbol of the value's type
+
+    # Call node fields (only set when kind == CALL)
+    call_kind: Optional[str] = None     # "method", "method_static", "constructor", "access", "access_static", "function"
 
     def to_dict(self) -> dict:
         d = {
@@ -76,8 +103,16 @@ class Node:
             "symbol": self.symbol,
             "file": self.file,
             "range": self.range.to_dict() if self.range else None,
+            "enclosing_range": self.enclosing_range.to_dict() if self.enclosing_range else None,
             "documentation": self.documentation,
         }
+        # Add kind-specific fields only when set
+        if self.value_kind is not None:
+            d["value_kind"] = self.value_kind
+        if self.type_symbol is not None:
+            d["type_symbol"] = self.type_symbol
+        if self.call_kind is not None:
+            d["call_kind"] = self.call_kind
         return d
 
 
@@ -88,6 +123,7 @@ class Edge:
     source: str  # node id
     target: str  # node id
     location: Optional[Location] = None
+    position: Optional[int] = None  # For argument edges: 0-based argument index
 
     def to_dict(self) -> dict:
         d = {
@@ -97,13 +133,15 @@ class Edge:
         }
         if self.location:
             d["location"] = self.location.to_dict()
+        if self.position is not None:
+            d["position"] = self.position
         return d
 
 
 @dataclass
 class SoTGraph:
     """Complete Source-of-Truth graph."""
-    version: str = "1.0"
+    version: str = "2.0"
     metadata: dict = field(default_factory=dict)
     nodes: list[Node] = field(default_factory=list)
     edges: list[Edge] = field(default_factory=list)
@@ -133,3 +171,33 @@ def generate_file_node_id(filepath: str) -> str:
     """Generate deterministic node ID for a file."""
     h = hashlib.sha256(f"file:{filepath}".encode("utf-8")).hexdigest()[:16]
     return f"node:{h}"
+
+
+def generate_value_node_id(location_id: str) -> str:
+    """Generate deterministic node ID for a Value node.
+
+    Uses 'val:' prefix to distinguish from Call nodes at same location.
+
+    Args:
+        location_id: Location-based ID from calls.json (format: "file:line:col")
+
+    Returns:
+        Node ID with format "node:val:<hash>"
+    """
+    h = hashlib.sha256(f"val:{location_id}".encode("utf-8")).hexdigest()[:16]
+    return f"node:val:{h}"
+
+
+def generate_call_node_id(location_id: str) -> str:
+    """Generate deterministic node ID for a Call node.
+
+    Uses 'call:' prefix to distinguish from Value nodes at same location.
+
+    Args:
+        location_id: Location-based ID from calls.json (format: "file:line:col")
+
+    Returns:
+        Node ID with format "node:call:<hash>"
+    """
+    h = hashlib.sha256(f"call:{location_id}".encode("utf-8")).hexdigest()[:16]
+    return f"node:call:{h}"
