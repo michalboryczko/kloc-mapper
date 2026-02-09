@@ -124,6 +124,7 @@ class Edge:
     target: str  # node id
     location: Optional[Location] = None
     position: Optional[int] = None  # For argument edges: 0-based argument index
+    expression: Optional[str] = None  # For argument edges: source expression text
 
     def to_dict(self) -> dict:
         d = {
@@ -135,6 +136,8 @@ class Edge:
             d["location"] = self.location.to_dict()
         if self.position is not None:
             d["position"] = self.position
+        if self.expression is not None:
+            d["expression"] = self.expression
         return d
 
 

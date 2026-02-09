@@ -271,3 +271,59 @@ class TestEdgeWithPosition:
 
         assert d["type"] == "calls"
         assert "position" not in d
+
+
+class TestEdgeWithExpression:
+    def test_to_dict_with_expression(self):
+        """Argument edge should include expression when set."""
+        edge = Edge(
+            type=EdgeType.ARGUMENT,
+            source="node:call:abc",
+            target="node:val:def",
+            position=0,
+            expression="$input->productId",
+        )
+        d = edge.to_dict()
+
+        assert d["type"] == "argument"
+        assert d["position"] == 0
+        assert d["expression"] == "$input->productId"
+
+    def test_to_dict_without_expression(self):
+        """Argument edge without expression should not include it."""
+        edge = Edge(
+            type=EdgeType.ARGUMENT,
+            source="node:call:abc",
+            target="node:val:def",
+            position=0,
+        )
+        d = edge.to_dict()
+
+        assert d["type"] == "argument"
+        assert d["position"] == 0
+        assert "expression" not in d
+
+    def test_to_dict_with_complex_expression(self):
+        """Edge should preserve complex expression text."""
+        edge = Edge(
+            type=EdgeType.ARGUMENT,
+            source="node:call:abc",
+            target="node:val:def",
+            position=1,
+            expression="new DateTimeImmutable()",
+        )
+        d = edge.to_dict()
+
+        assert d["expression"] == "new DateTimeImmutable()"
+
+    def test_non_argument_edge_no_expression(self):
+        """Non-argument edge should not include expression."""
+        edge = Edge(
+            type=EdgeType.CALLS,
+            source="node:call:abc",
+            target="node:method:def",
+        )
+        d = edge.to_dict()
+
+        assert "expression" not in d
+        assert "position" not in d

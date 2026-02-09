@@ -185,7 +185,7 @@ class CallsMapper:
                         target=receiver_node_id,
                     ))
 
-            # 3. Create 'argument' edges with position
+            # 3. Create 'argument' edges with position and expression
             arguments = call.get("arguments", [])
             for arg in arguments:
                 position = arg.get("position")
@@ -193,11 +193,13 @@ class CallsMapper:
                 if value_id and position is not None:
                     arg_node_id = self.value_id_to_node_id.get(value_id)
                     if arg_node_id:
+                        value_expr = arg.get("value_expr")
                         self.edges.append(Edge(
                             type=EdgeType.ARGUMENT,
                             source=call_node_id,
                             target=arg_node_id,
                             position=position,
+                            expression=value_expr if value_expr else None,
                         ))
 
             # 4. Create 'produces' edge to result value
@@ -241,6 +243,18 @@ class CallsMapper:
                         source=value_node_id,
                         target=source_node_id,
                     ))
+            else:
+                # Fallback: when source_value_id is null but source_call_id is present,
+                # look up the result Value produced by that Call and create assigned_from edge
+                source_call_id = value.get("source_call_id")
+                if source_call_id:
+                    result_value_node_id = self.value_id_to_node_id.get(source_call_id)
+                    if result_value_node_id:
+                        self.edges.append(Edge(
+                            type=EdgeType.ASSIGNED_FROM,
+                            source=value_node_id,
+                            target=result_value_node_id,
+                        ))
 
             # 2. Create 'type_of' edge to type class/interface
             type_symbol = value.get("type")
