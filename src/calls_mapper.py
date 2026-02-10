@@ -256,6 +256,18 @@ class CallsMapper:
                             target=result_value_node_id,
                         ))
 
+            # 1b. Create 'assigned_from' edge for constructor promotion:
+            # Property is assigned from the promoted parameter value
+            promoted_prop_symbol = value.get("promoted_property_symbol")
+            if promoted_prop_symbol:
+                prop_node_id = self._resolve_symbol_to_node_id(promoted_prop_symbol)
+                if prop_node_id:
+                    self.edges.append(Edge(
+                        type=EdgeType.ASSIGNED_FROM,
+                        source=prop_node_id,
+                        target=value_node_id,
+                    ))
+
             # 2. Create 'type_of' edge to type class/interface
             type_symbol = value.get("type")
             if type_symbol:

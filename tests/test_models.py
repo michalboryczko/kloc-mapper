@@ -327,3 +327,107 @@ class TestEdgeWithExpression:
 
         assert "expression" not in d
         assert "position" not in d
+
+
+class TestPromotedPropertyAssignedFrom:
+    """Tests for mapper creating assigned_from edges from promoted_property_symbol."""
+
+    def test_mapper_creates_assigned_from_for_promoted_property(self):
+        """Mapper should create assigned_from edge from Property to Value(parameter)
+        when promoted_property_symbol is present on the value."""
+        from src.calls_mapper import CallsMapper
+
+        # Set up a Property node in the symbol index
+        prop_symbol = "scip-php composer . App/Entity/Order#$id."
+        prop_node_id = generate_node_id(prop_symbol)
+        prop_node = Node(
+            id=prop_node_id,
+            kind=NodeKind.PROPERTY,
+            name="$id",
+            fqn="App\\Entity\\Order::$id",
+            symbol=prop_symbol,
+            file="src/Entity/Order.php",
+            range=Range(12, 8, 12, 22),
+        )
+
+        nodes = {prop_node_id: prop_node}
+        edges = []
+        symbol_to_node_id = {prop_symbol: prop_node_id}
+
+        calls_data = {
+            "values": [
+                {
+                    "id": "src/Entity/Order.php:12:16",
+                    "kind": "parameter",
+                    "symbol": "scip-php composer . App/Entity/Order#__construct().($id)",
+                    "type": None,
+                    "location": {"file": "src/Entity/Order.php", "line": 12, "col": 16},
+                    "promoted_property_symbol": prop_symbol,
+                },
+            ],
+            "calls": [],
+        }
+
+        mapper = CallsMapper(
+            calls_data=calls_data,
+            nodes=nodes,
+            edges=edges,
+            symbol_to_node_id=symbol_to_node_id,
+            file_symbol_index={},
+        )
+        mapper.process()
+
+        # Find the assigned_from edge
+        assigned_from_edges = [
+            e for e in edges
+            if e.type == EdgeType.ASSIGNED_FROM and e.source == prop_node_id
+        ]
+
+        assert len(assigned_from_edges) == 1, (
+            f"Expected 1 assigned_from edge from Property, found {len(assigned_from_edges)}"
+        )
+
+        # Verify the edge direction: source=Property, target=Value(parameter)
+        af_edge = assigned_from_edges[0]
+        assert af_edge.source == prop_node_id
+        # Target should be the Value node ID for the parameter
+        value_node_id = mapper.value_id_to_node_id.get("src/Entity/Order.php:12:16")
+        assert value_node_id is not None, "Value node should have been created"
+        assert af_edge.target == value_node_id
+
+    def test_mapper_no_assigned_from_without_promoted_property(self):
+        """Non-promoted parameters should NOT get assigned_from edges from properties."""
+        from src.calls_mapper import CallsMapper
+
+        nodes = {}
+        edges = []
+        symbol_to_node_id = {}
+
+        calls_data = {
+            "values": [
+                {
+                    "id": "src/Component/EmailSender.php:12:8",
+                    "kind": "parameter",
+                    "symbol": "scip-php composer . App/Component/EmailSender#send().($to)",
+                    "type": None,
+                    "location": {"file": "src/Component/EmailSender.php", "line": 12, "col": 8},
+                    # No promoted_property_symbol — regular parameter
+                },
+            ],
+            "calls": [],
+        }
+
+        mapper = CallsMapper(
+            calls_data=calls_data,
+            nodes=nodes,
+            edges=edges,
+            symbol_to_node_id=symbol_to_node_id,
+            file_symbol_index={},
+        )
+        mapper.process()
+
+        # Should have no assigned_from edges at all
+        assigned_from_edges = [e for e in edges if e.type == EdgeType.ASSIGNED_FROM]
+        assert len(assigned_from_edges) == 0, (
+            f"Non-promoted param should have no assigned_from edges, found {len(assigned_from_edges)}"
+        )
