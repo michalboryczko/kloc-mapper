@@ -365,11 +365,19 @@ class CallsMapper:
 
         # For parameters/locals with symbol, use the symbol structure
         if symbol:
-            # Extract scope from symbol (everything before the value part)
-            scope_match = re.match(r'^(.+?)(?:\.local\$|\.\(\$)', symbol)
-            if scope_match:
-                scope = scope_match.group(1)
-                # Convert SCIP symbol to FQN format
+            # Local variable: preserve local$ prefix and @line suffix
+            local_match = re.match(r'^(.+?)\.local\$(.+?)@(\d+)$', symbol)
+            if local_match:
+                scope = local_match.group(1)
+                var_name = local_match.group(2)
+                line = local_match.group(3)
+                fqn_scope = self._symbol_to_fqn(scope)
+                return f"{fqn_scope}.local${var_name}@{line}"
+
+            # Parameter: keep current format (unchanged)
+            param_match = re.match(r'^(.+?)\.\(\$(.+?)\)$', symbol)
+            if param_match:
+                scope = param_match.group(1)
                 fqn_scope = self._symbol_to_fqn(scope)
                 return f"{fqn_scope}.{name}"
 

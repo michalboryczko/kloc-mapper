@@ -431,3 +431,87 @@ class TestPromotedPropertyAssignedFrom:
         assert len(assigned_from_edges) == 0, (
             f"Non-promoted param should have no assigned_from edges, found {len(assigned_from_edges)}"
         )
+
+
+class TestBuildValueFqn:
+    """Tests for _build_value_fqn local variable identity preservation."""
+
+    def test_local_variable_fqn_preserves_identity(self):
+        """Local variable symbol should produce FQN with local$name@line format."""
+        from src.calls_mapper import CallsMapper
+
+        nodes = {}
+        edges = []
+        calls_data = {"values": [], "calls": []}
+
+        mapper = CallsMapper(
+            calls_data=calls_data,
+            nodes=nodes,
+            edges=edges,
+            symbol_to_node_id={},
+            file_symbol_index={},
+        )
+
+        value = {
+            "symbol": "scip-php composer . App/Service/OrderService#createOrder().local$savedOrder@45",
+            "location": {"file": "src/Service/OrderService.php", "line": 45, "col": 8},
+        }
+
+        fqn = mapper._build_value_fqn(value, "$savedOrder")
+        assert fqn == "App\\Service\\OrderService::createOrder().local$savedOrder@45"
+
+    def test_parameter_fqn_unchanged(self):
+        """Parameter symbol should produce FQN with .$name format (unchanged behavior)."""
+        from src.calls_mapper import CallsMapper
+
+        nodes = {}
+        edges = []
+        calls_data = {"values": [], "calls": []}
+
+        mapper = CallsMapper(
+            calls_data=calls_data,
+            nodes=nodes,
+            edges=edges,
+            symbol_to_node_id={},
+            file_symbol_index={},
+        )
+
+        value = {
+            "symbol": "scip-php composer . App/Service/OrderService#createOrder().($order)",
+            "location": {"file": "src/Service/OrderService.php", "line": 30, "col": 4},
+        }
+
+        fqn = mapper._build_value_fqn(value, "$order")
+        assert fqn == "App\\Service\\OrderService::createOrder().$order"
+
+    def test_local_variable_different_lines_different_fqns(self):
+        """Two local variables with same name on different lines should have different FQNs."""
+        from src.calls_mapper import CallsMapper
+
+        nodes = {}
+        edges = []
+        calls_data = {"values": [], "calls": []}
+
+        mapper = CallsMapper(
+            calls_data=calls_data,
+            nodes=nodes,
+            edges=edges,
+            symbol_to_node_id={},
+            file_symbol_index={},
+        )
+
+        value1 = {
+            "symbol": "scip-php composer . App/Service/OrderService#process().local$result@10",
+            "location": {"file": "src/Service/OrderService.php", "line": 10, "col": 8},
+        }
+        value2 = {
+            "symbol": "scip-php composer . App/Service/OrderService#process().local$result@25",
+            "location": {"file": "src/Service/OrderService.php", "line": 25, "col": 8},
+        }
+
+        fqn1 = mapper._build_value_fqn(value1, "$result")
+        fqn2 = mapper._build_value_fqn(value2, "$result")
+
+        assert fqn1 != fqn2
+        assert "local$result@10" in fqn1
+        assert "local$result@25" in fqn2
