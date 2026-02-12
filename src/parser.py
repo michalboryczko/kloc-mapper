@@ -58,7 +58,7 @@ def extract_fqn_from_descriptor(descriptor: str) -> str:
         method_part = arg_match.group(1)
         arg_name = arg_match.group(2)
         method_fqn = extract_fqn_from_descriptor(method_part + ".")
-        return f"{method_fqn}::{arg_name}"
+        return f"{method_fqn}.{arg_name}"
 
     # Split by # to get class and member
     if "#" in d:

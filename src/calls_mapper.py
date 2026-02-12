@@ -185,7 +185,7 @@ class CallsMapper:
                         target=receiver_node_id,
                     ))
 
-            # 3. Create 'argument' edges with position and expression
+            # 3. Create 'argument' edges with position, expression, and parameter
             arguments = call.get("arguments", [])
             for arg in arguments:
                 position = arg.get("position")
@@ -194,12 +194,15 @@ class CallsMapper:
                     arg_node_id = self.value_id_to_node_id.get(value_id)
                     if arg_node_id:
                         value_expr = arg.get("value_expr")
+                        param_symbol = arg.get("parameter")
+                        param_fqn = self._resolve_param_fqn(param_symbol) if param_symbol else None
                         self.edges.append(Edge(
                             type=EdgeType.ARGUMENT,
                             source=call_node_id,
                             target=arg_node_id,
                             position=position,
                             expression=value_expr if value_expr else None,
+                            parameter=param_fqn,
                         ))
 
             # 4. Create 'produces' edge to result value
@@ -446,6 +449,28 @@ class CallsMapper:
 
         # For builtin types, we may not have a node
         return None
+
+    def _resolve_param_fqn(self, param_symbol: str) -> Optional[str]:
+        """Resolve a scip-php parameter SCIP symbol to its FQN.
+
+        The parameter symbol is like:
+          "scip-php composer ... App/Repository/OrderRepositoryInterface#save().($order)"
+        This should resolve to:
+          "App\\Repository\\OrderRepositoryInterface::save().$order"
+        """
+        # First try to find the node and use its FQN
+        node_id = self._resolve_symbol_to_node_id(param_symbol)
+        if node_id and node_id in self.nodes:
+            return self.nodes[node_id].fqn
+        # Fall back: extract param name and scope, convert scope to FQN
+        param_match = re.search(r'\.\(\$?([a-zA-Z_][a-zA-Z0-9_]*)\)$', param_symbol)
+        if param_match:
+            param_name = "$" + param_match.group(1)
+            scope_symbol = param_symbol[:param_match.start()] + "."
+            scope_fqn = self._symbol_to_fqn(scope_symbol)
+            return f"{scope_fqn}.{param_name}"
+        # Shouldn't happen for parameter symbols, but fall back to raw conversion
+        return self._symbol_to_fqn(param_symbol)
 
     def _get_enclosing_symbol_from_value(self, symbol: str) -> Optional[str]:
         """Extract the enclosing method/function symbol from a value symbol."""

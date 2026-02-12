@@ -329,6 +329,49 @@ class TestEdgeWithExpression:
         assert "position" not in d
 
 
+class TestEdgeWithParameter:
+    def test_to_dict_with_parameter(self):
+        """Argument edge should include parameter FQN when set."""
+        edge = Edge(
+            type=EdgeType.ARGUMENT,
+            source="node:call:abc",
+            target="node:val:def",
+            position=0,
+            expression="$order",
+            parameter="App\\Repository\\OrderRepository::save().$order",
+        )
+        d = edge.to_dict()
+
+        assert d["type"] == "argument"
+        assert d["position"] == 0
+        assert d["expression"] == "$order"
+        assert d["parameter"] == "App\\Repository\\OrderRepository::save().$order"
+
+    def test_to_dict_without_parameter(self):
+        """Argument edge without parameter should not include it."""
+        edge = Edge(
+            type=EdgeType.ARGUMENT,
+            source="node:call:abc",
+            target="node:val:def",
+            position=0,
+        )
+        d = edge.to_dict()
+
+        assert d["type"] == "argument"
+        assert "parameter" not in d
+
+    def test_non_argument_edge_no_parameter(self):
+        """Non-argument edge should not include parameter."""
+        edge = Edge(
+            type=EdgeType.CALLS,
+            source="node:call:abc",
+            target="node:method:def",
+        )
+        d = edge.to_dict()
+
+        assert "parameter" not in d
+
+
 class TestPromotedPropertyAssignedFrom:
     """Tests for mapper creating assigned_from edges from promoted_property_symbol."""
 
@@ -515,3 +558,157 @@ class TestBuildValueFqn:
         assert fqn1 != fqn2
         assert "local$result@10" in fqn1
         assert "local$result@25" in fqn2
+
+
+class TestResolveParamFqn:
+    """Tests for _resolve_param_fqn converting SCIP param symbols to FQN."""
+
+    def test_resolve_param_fqn_fallback(self):
+        """Parameter symbol should resolve to FQN with . separator."""
+        from src.calls_mapper import CallsMapper
+
+        mapper = CallsMapper(
+            calls_data={"values": [], "calls": []},
+            nodes={},
+            edges=[],
+            symbol_to_node_id={},
+            file_symbol_index={},
+        )
+
+        param_symbol = "scip-php composer . App/Repository/OrderRepository#save().($order)"
+        result = mapper._resolve_param_fqn(param_symbol)
+        assert result == "App\\Repository\\OrderRepository::save().$order"
+
+    def test_resolve_param_fqn_with_existing_node(self):
+        """When a Value node exists for the param, use its FQN."""
+        from src.calls_mapper import CallsMapper
+
+        param_symbol = "scip-php composer . App/Service/OrderService#createOrder().($input)"
+        node_id = generate_value_node_id("src/Service.php:30:4")
+        param_node = Node(
+            id=node_id,
+            kind=NodeKind.VALUE,
+            name="$input",
+            fqn="App\\Service\\OrderService::createOrder().$input",
+            symbol=param_symbol,
+            file="src/Service.php",
+            range=Range(30, 4, 30, 10),
+            value_kind="parameter",
+        )
+
+        nodes = {node_id: param_node}
+        symbol_to_node_id = {param_symbol: node_id}
+
+        mapper = CallsMapper(
+            calls_data={"values": [], "calls": []},
+            nodes=nodes,
+            edges=[],
+            symbol_to_node_id=symbol_to_node_id,
+            file_symbol_index={},
+        )
+
+        result = mapper._resolve_param_fqn(param_symbol)
+        assert result == "App\\Service\\OrderService::createOrder().$input"
+
+
+class TestArgumentEdgeParameter:
+    """Tests for mapper storing parameter FQN on argument edges."""
+
+    def test_argument_edge_has_parameter(self):
+        """Argument edge should have parameter field when call argument has parameter symbol."""
+        from src.calls_mapper import CallsMapper
+
+        param_symbol = "scip-php composer . App/Repository/OrderRepository#save().($order)"
+
+        calls_data = {
+            "values": [
+                {
+                    "id": "src/Service.php:40:8",
+                    "kind": "local",
+                    "symbol": "scip-php composer . App/Service/OrderService#createOrder().local$order@40",
+                    "type": None,
+                    "location": {"file": "src/Service.php", "line": 40, "col": 8},
+                },
+            ],
+            "calls": [
+                {
+                    "id": "src/Service.php:42:20",
+                    "kind": "method",
+                    "callee": "scip-php composer . App/Repository/OrderRepository#save().",
+                    "caller": "scip-php composer . App/Service/OrderService#createOrder().",
+                    "location": {"file": "src/Service.php", "line": 42, "col": 20},
+                    "arguments": [
+                        {
+                            "position": 0,
+                            "value_id": "src/Service.php:40:8",
+                            "value_expr": "$order",
+                            "parameter": param_symbol,
+                        },
+                    ],
+                },
+            ],
+        }
+
+        nodes = {}
+        edges = []
+
+        mapper = CallsMapper(
+            calls_data=calls_data,
+            nodes=nodes,
+            edges=edges,
+            symbol_to_node_id={},
+            file_symbol_index={},
+        )
+        mapper.process()
+
+        arg_edges = [e for e in edges if e.type == EdgeType.ARGUMENT]
+        assert len(arg_edges) == 1
+        assert arg_edges[0].parameter == "App\\Repository\\OrderRepository::save().$order"
+
+    def test_argument_edge_no_parameter_when_missing(self):
+        """Argument edge should have None parameter when call argument has no parameter symbol."""
+        from src.calls_mapper import CallsMapper
+
+        calls_data = {
+            "values": [
+                {
+                    "id": "src/Service.php:40:8",
+                    "kind": "local",
+                    "symbol": "",
+                    "type": None,
+                    "location": {"file": "src/Service.php", "line": 40, "col": 8},
+                },
+            ],
+            "calls": [
+                {
+                    "id": "src/Service.php:42:20",
+                    "kind": "method",
+                    "callee": "scip-php composer . App/Repository/Repo#save().",
+                    "caller": "scip-php composer . App/Service/Svc#do().",
+                    "location": {"file": "src/Service.php", "line": 42, "col": 20},
+                    "arguments": [
+                        {
+                            "position": 0,
+                            "value_id": "src/Service.php:40:8",
+                            "value_expr": "$order",
+                        },
+                    ],
+                },
+            ],
+        }
+
+        nodes = {}
+        edges = []
+
+        mapper = CallsMapper(
+            calls_data=calls_data,
+            nodes=nodes,
+            edges=edges,
+            symbol_to_node_id={},
+            file_symbol_index={},
+        )
+        mapper.process()
+
+        arg_edges = [e for e in edges if e.type == EdgeType.ARGUMENT]
+        assert len(arg_edges) == 1
+        assert arg_edges[0].parameter is None

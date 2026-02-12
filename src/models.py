@@ -125,6 +125,7 @@ class Edge:
     location: Optional[Location] = None
     position: Optional[int] = None  # For argument edges: 0-based argument index
     expression: Optional[str] = None  # For argument edges: source expression text
+    parameter: Optional[str] = None  # For argument edges: formal parameter FQN
 
     def to_dict(self) -> dict:
         d = {
@@ -138,6 +139,8 @@ class Edge:
             d["position"] = self.position
         if self.expression is not None:
             d["expression"] = self.expression
+        if self.parameter is not None:
+            d["parameter"] = self.parameter
         return d
 
 
