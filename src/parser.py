@@ -4,22 +4,32 @@ from typing import Optional
 import re
 
 
+_parse_cache: dict[str, dict] = {}
+
+
 def parse_symbol_string(symbol: str) -> dict:
-    """Parse SCIP symbol string into components.
+    """Parse SCIP symbol string into components. Results are cached.
 
     SCIP symbol format: scheme manager package version descriptor
     Example: scip-php composer template/u-synxissetup 1.0.0.0 App/Entity/User#
     """
+    if symbol in _parse_cache:
+        return _parse_cache[symbol]
+
     parts = symbol.split(" ")
     if len(parts) >= 5:
-        return {
+        result = {
             "scheme": parts[0],
             "manager": parts[1],
             "package": parts[2],
             "version": parts[3],
             "descriptor": " ".join(parts[4:]),
         }
-    return {"raw": symbol}
+    else:
+        result = {"raw": symbol}
+
+    _parse_cache[symbol] = result
+    return result
 
 
 def parse_range(range_list: list[int]) -> tuple[int, int, int, int]:

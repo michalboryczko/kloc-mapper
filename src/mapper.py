@@ -260,6 +260,14 @@ class SCIPMapper:
             self.nodes[node_id] = node
             self.symbol_to_node_id[symbol] = node_id
 
+        # Build descriptor index for O(1) relationship resolution
+        self.descriptor_to_node_id: dict[str, str] = {}
+        for symbol, node_id in self.symbol_to_node_id.items():
+            parsed = parse_symbol_string(symbol)
+            if "descriptor" in parsed:
+                desc = parsed["descriptor"].rstrip("#").rstrip(".")
+                self.descriptor_to_node_id[desc] = node_id
+
     def _build_file_symbol_index(self):
         """Build spatial index for fast enclosing symbol lookup.
 
@@ -330,21 +338,21 @@ class SCIPMapper:
 
     def _resolve_relationship_target(self, rel_symbol: str) -> Optional[str]:
         """Resolve a relationship target symbol to a node ID."""
-        # Direct lookup
+        # Direct lookup by full symbol
         if rel_symbol in self.symbol_to_node_id:
             return self.symbol_to_node_id[rel_symbol]
 
-        # Try to match by descriptor suffix
-        rel_clean = rel_symbol.lstrip("/").rstrip("#")
+        # Descriptor index lookup
+        rel_clean = rel_symbol.lstrip("/").rstrip("#").rstrip(".")
+        if rel_clean in self.descriptor_to_node_id:
+            return self.descriptor_to_node_id[rel_clean]
 
-        for symbol, node_id in self.symbol_to_node_id.items():
-            parsed = parse_symbol_string(symbol)
-            if "descriptor" not in parsed:
-                continue
-
-            desc = parsed["descriptor"].rstrip("#")
-            if desc == rel_clean or desc.endswith("/" + rel_clean):
-                return node_id
+        # Try extracting descriptor from full SCIP symbol
+        parts = rel_symbol.split()
+        if len(parts) >= 5:
+            desc = " ".join(parts[4:]).rstrip("#").rstrip(".")
+            if desc in self.descriptor_to_node_id:
+                return self.descriptor_to_node_id[desc]
 
         return None
 
