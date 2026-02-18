@@ -1,31 +1,24 @@
 # kloc-mapper
 
-A tool that converts unified JSON indexes (produced by scip-php) into a Source-of-Truth (SoT) JSON graph representation. Part of the **KLOC (Knowledge of Code)** project, which provides rich code context for AI coding agents.
+Transforms unified JSON indexes (produced by scip-php) into Source-of-Truth (SoT) JSON graph files consumed by kloc-cli.
 
-## What it does
+## Pipeline Position
 
-kloc-mapper transforms unified JSON data containing SCIP index and call graph information into a unified graph format that represents:
+```
+PHP code -> scip-php -> index.json -> kloc-mapper -> sot.json -> kloc-cli -> output
+```
 
-- **Structural nodes**: Files, classes, interfaces, traits, enums, methods, functions, properties, constants, arguments
-- **Runtime nodes**: Values (parameters, locals, results) and Calls (method calls, property accesses, constructors)
-- **Edges**: Structural relationships, inheritance, usage dependencies, call relationships, and type information
+kloc-mapper sits between scip-php (which produces `index.json`) and kloc-cli (which queries `sot.json`).
 
 ## Installation
 
-Requires Python 3.10+
-
 ```bash
-# Using uv (recommended)
 cd kloc-mapper
-uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+uv venv && source .venv/bin/activate
 uv pip install -e .
-
-# Or using pip
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -e .
 ```
+
+Requires Python 3.10+. No external dependencies.
 
 ## Usage
 
@@ -37,75 +30,40 @@ kloc-mapper map index.json --out sot.json
 kloc-mapper map index.json --out sot.json --pretty
 ```
 
-### CLI Options
+### Options
 
 | Option | Short | Description |
 |--------|-------|-------------|
-| `input` | | Path to unified JSON input file (.json, required, positional) |
+| `input` | | Path to unified JSON input file (positional, required) |
 | `--out` | `-o` | Output path for SoT JSON (required) |
 | `--pretty` | `-p` | Pretty-print JSON output |
 
-## Input Format
+## Input: Unified JSON (v4.0)
 
-### Unified JSON (version 4.0)
-
-A single `.json` file produced by scip-php containing both SCIP index data and call graph data in one unified format. This is the only supported input format.
-
-The unified JSON includes:
+A single `.json` file produced by scip-php containing:
 - SCIP index data (documents, symbols, occurrences, relationships)
 - Call graph data (values, calls, receivers, arguments)
 
-## Output Format (sot.json v2.0)
+Only `.json` files are accepted. Legacy `.kloc` and `.scip` formats are not supported.
 
-The SoT JSON contains nodes and edges representing the complete code graph:
+## Output: SoT JSON (v2.0)
+
+The graph contains nodes and edges representing the complete code structure.
 
 ```json
 {
   "version": "2.0",
-  "metadata": {
-    "generated_at": "2026-02-05T12:00:00Z",
-    "project_root": "/path/to/project"
-  },
+  "metadata": { "generated_at": "...", "project_root": "..." },
   "nodes": [...],
   "edges": [...]
 }
 ```
 
-### Node Example
-
-```json
-{
-  "id": "abc123",
-  "kind": "Method",
-  "name": "getUserId",
-  "fqn": "App\\Service\\User::getUserId()",
-  "symbol": "scip-php composer ... App/Service/User#getUserId().",
-  "file": "src/Service/User.php",
-  "range": {
-    "start_line": 42,
-    "start_col": 4,
-    "end_line": 50,
-    "end_col": 5
-  },
-  "documentation": ["Returns the user ID"]
-}
-```
-
-### Edge Example
-
-```json
-{
-  "type": "calls",
-  "source": "node:call:123",
-  "target": "node:method:456"
-}
-```
-
 ### Node Kinds
 
-**Structural nodes**: `File`, `Class`, `Interface`, `Trait`, `Enum`, `Method`, `Function`, `Property`, `Const`, `Argument`, `EnumCase`
+**Structural**: File, Class, Interface, Trait, Enum, Method, Function, Property, Const, Argument, EnumCase
 
-**Runtime nodes**: `Value`, `Call`
+**Runtime**: Value (parameters, locals, results), Call (method calls, property accesses, constructors)
 
 ### Edge Types
 
@@ -119,18 +77,30 @@ The SoT JSON contains nodes and edges representing the complete code graph:
 | `uses` | Direct reference (calls, type hints, instantiation) |
 | `type_hint` | Type annotation reference |
 | `calls` | Call site to target method/property/constructor |
-| `receiver` | Call to receiver value (object being called on) |
+| `receiver` | Call to receiver value |
 | `argument` | Call to argument value (with position) |
 | `produces` | Call to result value |
 | `assigned_from` | Value assignment source |
 | `type_of` | Value to its runtime type |
 
-## How it works
+## Project Structure
 
 ```
-Input (unified JSON)
+src/
+├── cli.py           # Command-line interface
+├── models.py        # Data structures (Node, Edge, SoTGraph)
+├── parser.py        # SCIP symbol parsing utilities
+├── mapper.py        # Core JSON-to-SoT mapping logic
+├── json_parser.py   # Unified JSON parser (v4.0)
+└── calls_mapper.py  # Calls data to Value/Call nodes
+```
+
+## How It Works
+
+```
+Unified JSON (index.json)
        |
-       +-> Parse unified JSON (index + calls data)
+       +-> Parse unified JSON (SCIP index + calls data)
        +-> Extract symbols and documentation
        +-> Create structural nodes (files, classes, methods, etc.)
        +-> Build spatial index for fast lookups
@@ -143,18 +113,14 @@ Input (unified JSON)
            +-> Build type edges (type_of)
        |
        v
-SoT JSON v2.0 (unified graph)
+SoT JSON v2.0 (sot.json)
 ```
 
 ## Development
 
 ```bash
-# Install dev dependencies
 uv pip install -e ".[dev]"
-# or: pip install -e ".[dev]"
-
-# Run tests
-pytest tests/
+uv run pytest tests/ -v
 ```
 
 ## Building Standalone Binary
@@ -163,26 +129,7 @@ pytest tests/
 ./build.sh
 ```
 
-Detects platform and builds appropriate binary:
-- **Linux**: uses Docker (requires Docker)
-- **macOS**: builds natively (requires Python 3.10+, Docker cannot produce macOS binaries)
-
-## Project Structure
-
-```
-src/
-+-- cli.py           # Command-line interface
-+-- models.py        # Data structures (Node, Edge, SoTGraph)
-+-- parser.py        # SCIP symbol parsing utilities
-+-- mapper.py        # Core JSON-to-SoT mapping logic
-+-- json_parser.py   # Unified JSON parser (version 4.0)
-+-- calls_mapper.py  # Calls data to Value/Call nodes
-```
-
-## Related Projects
-
-- **kloc-cli**: Consumes SoT JSON to provide commands like `deps`, `usages`, `context`, and `inherit`
-- **SCIP**: [Sourcegraph Code Intelligence Protocol](https://github.com/sourcegraph/scip)
+Builds platform-appropriate binary: Linux via Docker, macOS natively.
 
 ## License
 
