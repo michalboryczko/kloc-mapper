@@ -1,8 +1,14 @@
 # kloc-mapper Development Guide
 
+## Overview
+
+Maps unified JSON output from scip-php into Source-of-Truth (sot.json) graph format consumed by kloc-cli. Handles SCIP index parsing, symbol classification, node/edge construction, and call graph mapping.
+
 ## Development Setup
 
-This project uses `uv` as the package manager. The virtual environment is at `.venv/`.
+Python >=3.10. Uses `uv` as the package manager. Virtual environment at `.venv/`.
+
+No runtime dependencies (stdlib only).
 
 ```bash
 # Install dependencies (including dev)
@@ -11,46 +17,31 @@ uv pip install -e ".[dev]"
 # Run the CLI during development
 uv run kloc-mapper --help
 uv run kloc-mapper map --help
-
-# Or run directly via python module
-.venv/bin/python -m src.cli --help
 ```
 
-### CLI Usage
+## CLI Usage
 
 ```bash
-# Map a .kloc archive to SoT JSON (includes calls.json data)
-uv run kloc-mapper map path/to/index.kloc -o output/sot.json
-
-# Map a plain .scip file to SoT JSON (without call graph data)
-uv run kloc-mapper map path/to/index.scip -o output/sot.json
+# Map unified JSON to SoT JSON
+uv run kloc-mapper map path/to/index.json -o output/sot.json
 
 # With pretty printing
-uv run kloc-mapper map path/to/index.kloc -o output/sot.json --pretty
+uv run kloc-mapper map path/to/index.json -o output/sot.json --pretty
 ```
 
 Options for `map` command:
-- `input` (positional, required) — path to input file (.kloc archive or .scip file)
-- `--out / -o` (required) — output path for SoT JSON
-- `--pretty / -p` — pretty-print the JSON output
+- `input` (positional, required) -- path to unified JSON input file (.json)
+- `--out / -o` (required) -- output path for SoT JSON
+- `--pretty / -p` -- pretty-print the JSON output
 
-### Input Formats
+### Input format
 
-The mapper accepts two input formats:
+Accepts unified JSON (version 4.0) produced by scip-php. Single `.json` file containing SCIP index data and call graph data. Legacy `.kloc` and `.scip` formats are not supported.
 
-1. **.kloc archive** (ZIP file containing):
-   - `index.scip` — SCIP protobuf index (required)
-   - `calls.json` — call graph data from scip-php (optional)
+### Output format (sot.json v2.0)
 
-2. **.scip file** — plain SCIP protobuf index (no call graph data)
-
-When using .kloc archives, the output sot.json includes Value and Call nodes for detailed call tracking. With plain .scip files, only definition/reference nodes are created.
-
-### Output Format (sot.json v2.0)
-
-The unified graph format includes:
-- **Node kinds**: File, Class, Interface, Trait, Enum, Method, Function, Property, Constant, Argument, Value, Call
-- **Edge types**: contains, uses, extends, implements, overrides, uses_trait, type_hint, calls, receiver, argument, produces, assigned_from, type_of
+- **13 Node kinds**: File, Class, Interface, Trait, Enum, Method, Function, Property, Constant, Argument, Value, Call
+- **13 Edge types**: contains, uses, extends, implements, overrides, uses_trait, type_hint, calls, receiver, argument, produces, assigned_from, type_of
 
 ## Testing
 
@@ -60,22 +51,45 @@ uv run pytest tests/ -v
 
 # Run a specific test file
 uv run pytest tests/test_parser.py -v
-uv run pytest tests/test_models.py -v
-uv run pytest tests/test_mapper.py -v
 ```
 
-### Test structure
+### Test files
 
-- `tests/test_models.py` — **Unit tests** for data models (Node, Edge, Range, SoTGraph serialization, ID generation)
-- `tests/test_parser.py` — **Unit tests** for SCIP parsing utilities (symbol strings, ranges, FQN extraction, role bitmasks)
-- `tests/test_mapper.py` — **Integration tests** for the full SCIP-to-SoT mapping pipeline. Requires `artifacts/index_fixed.scip` (skipped if missing). Tests node creation, edge building, containment, inheritance, overrides, and deduplication.
+| File | Type | What it tests |
+|------|------|---------------|
+| `test_models.py` | Unit | Data models: Node, Edge, Range, SoTGraph serialization, ID generation (714 lines) |
+| `test_parser.py` | Unit | SCIP parsing: symbol strings, ranges, FQN extraction, role bitmasks |
+| `test_classify_symbol.py` | Unit | Symbol classification logic |
+| `test_mapper.py` | Integration | Full JSON-to-SoT mapping pipeline (requires `artifacts/index.json`, skipped if missing): node creation, edge building, containment, inheritance, overrides, deduplication |
+
+## Architecture
+
+### Source layout
+
+```
+src/
+  cli.py           # CLI entry point (argparse)
+  mapper.py        # Main mapping pipeline: SCIP documents -> SoT graph (538 lines)
+  calls_mapper.py  # Call graph mapping: calls.json -> Call/Value nodes + edges (487 lines)
+  parser.py        # SCIP protobuf parsing utilities (226 lines)
+  json_parser.py   # Unified JSON input parser (122 lines)
+  models.py        # SoT data models: Node, Edge, Range, SoTGraph (209 lines)
+```
+
+### Pipeline
+
+1. `json_parser.py` reads unified JSON input
+2. `parser.py` extracts SCIP symbol information (FQNs, ranges, roles)
+3. `mapper.py` builds SoT graph nodes and edges from SCIP documents
+4. `calls_mapper.py` adds Call and Value nodes with data-flow edges
+5. `models.py` serializes the final SoT graph to JSON
 
 ## Building
 
-The project builds a standalone binary using PyInstaller via `build.sh`.
+Standalone binary via PyInstaller:
 
 ```bash
-# Build for current platform (macOS builds natively, Linux uses Docker)
+# Build for current platform (macOS native, Linux via Docker)
 ./build.sh
 
 # Test the binary
@@ -83,8 +97,6 @@ The project builds a standalone binary using PyInstaller via `build.sh`.
 ```
 
 ### Force Linux build via Docker
-
-On macOS, you can force a Linux binary build by running the Docker build directly:
 
 ```bash
 docker build -t kloc-mapper-builder-linux -f - . <<'EOF'
@@ -95,12 +107,10 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml build_entry.py ./
 COPY src/ ./src/
 RUN uv pip install --system -e . && uv pip install --system pyinstaller
-RUN pyinstaller --onefile --name kloc-mapper --collect-all src --collect-all protobuf --clean build_entry.py
+RUN pyinstaller --onefile --name kloc-mapper --collect-all src --clean build_entry.py
 EOF
 
 docker create --name kloc-mapper-build kloc-mapper-builder-linux
 docker cp kloc-mapper-build:/build/dist/kloc-mapper ./dist/kloc-mapper
 docker rm kloc-mapper-build
 ```
-
-The output binary is at `./dist/kloc-mapper`.

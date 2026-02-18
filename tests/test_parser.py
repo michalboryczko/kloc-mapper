@@ -62,7 +62,7 @@ class TestExtractFqnFromDescriptor:
 
     def test_argument(self):
         result = extract_fqn_from_descriptor("App/Entity/User#getId().($id)")
-        assert result == "App\\Entity\\User::getId()::$id"
+        assert result == "App\\Entity\\User::getId().$id"
 
 
 class TestExtractNameFromDescriptor:

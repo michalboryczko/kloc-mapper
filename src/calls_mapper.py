@@ -185,7 +185,7 @@ class CallsMapper:
                         target=receiver_node_id,
                     ))
 
-            # 3. Create 'argument' edges with position
+            # 3. Create 'argument' edges with position, expression, and parameter
             arguments = call.get("arguments", [])
             for arg in arguments:
                 position = arg.get("position")
@@ -193,11 +193,16 @@ class CallsMapper:
                 if value_id and position is not None:
                     arg_node_id = self.value_id_to_node_id.get(value_id)
                     if arg_node_id:
+                        value_expr = arg.get("value_expr")
+                        param_symbol = arg.get("parameter")
+                        param_fqn = self._resolve_param_fqn(param_symbol) if param_symbol else None
                         self.edges.append(Edge(
                             type=EdgeType.ARGUMENT,
                             source=call_node_id,
                             target=arg_node_id,
                             position=position,
+                            expression=value_expr if value_expr else None,
+                            parameter=param_fqn,
                         ))
 
             # 4. Create 'produces' edge to result value
@@ -240,6 +245,30 @@ class CallsMapper:
                         type=EdgeType.ASSIGNED_FROM,
                         source=value_node_id,
                         target=source_node_id,
+                    ))
+            else:
+                # Fallback: when source_value_id is null but source_call_id is present,
+                # look up the result Value produced by that Call and create assigned_from edge
+                source_call_id = value.get("source_call_id")
+                if source_call_id:
+                    result_value_node_id = self.value_id_to_node_id.get(source_call_id)
+                    if result_value_node_id:
+                        self.edges.append(Edge(
+                            type=EdgeType.ASSIGNED_FROM,
+                            source=value_node_id,
+                            target=result_value_node_id,
+                        ))
+
+            # 1b. Create 'assigned_from' edge for constructor promotion:
+            # Property is assigned from the promoted parameter value
+            promoted_prop_symbol = value.get("promoted_property_symbol")
+            if promoted_prop_symbol:
+                prop_node_id = self._resolve_symbol_to_node_id(promoted_prop_symbol)
+                if prop_node_id:
+                    self.edges.append(Edge(
+                        type=EdgeType.ASSIGNED_FROM,
+                        source=prop_node_id,
+                        target=value_node_id,
                     ))
 
             # 2. Create 'type_of' edge to type class/interface
@@ -339,11 +368,19 @@ class CallsMapper:
 
         # For parameters/locals with symbol, use the symbol structure
         if symbol:
-            # Extract scope from symbol (everything before the value part)
-            scope_match = re.match(r'^(.+?)(?:\.local\$|\.\(\$)', symbol)
-            if scope_match:
-                scope = scope_match.group(1)
-                # Convert SCIP symbol to FQN format
+            # Local variable: preserve local$ prefix and @line suffix
+            local_match = re.match(r'^(.+?)\.local\$(.+?)@(\d+)$', symbol)
+            if local_match:
+                scope = local_match.group(1)
+                var_name = local_match.group(2)
+                line = local_match.group(3)
+                fqn_scope = self._symbol_to_fqn(scope)
+                return f"{fqn_scope}.local${var_name}@{line}"
+
+            # Parameter: keep current format (unchanged)
+            param_match = re.match(r'^(.+?)\.\(\$(.+?)\)$', symbol)
+            if param_match:
+                scope = param_match.group(1)
                 fqn_scope = self._symbol_to_fqn(scope)
                 return f"{fqn_scope}.{name}"
 
@@ -412,6 +449,28 @@ class CallsMapper:
 
         # For builtin types, we may not have a node
         return None
+
+    def _resolve_param_fqn(self, param_symbol: str) -> Optional[str]:
+        """Resolve a scip-php parameter SCIP symbol to its FQN.
+
+        The parameter symbol is like:
+          "scip-php composer ... App/Repository/OrderRepositoryInterface#save().($order)"
+        This should resolve to:
+          "App\\Repository\\OrderRepositoryInterface::save().$order"
+        """
+        # First try to find the node and use its FQN
+        node_id = self._resolve_symbol_to_node_id(param_symbol)
+        if node_id and node_id in self.nodes:
+            return self.nodes[node_id].fqn
+        # Fall back: extract param name and scope, convert scope to FQN
+        param_match = re.search(r'\.\(\$?([a-zA-Z_][a-zA-Z0-9_]*)\)$', param_symbol)
+        if param_match:
+            param_name = "$" + param_match.group(1)
+            scope_symbol = param_symbol[:param_match.start()] + "."
+            scope_fqn = self._symbol_to_fqn(scope_symbol)
+            return f"{scope_fqn}.{param_name}"
+        # Shouldn't happen for parameter symbols, but fall back to raw conversion
+        return self._symbol_to_fqn(param_symbol)
 
     def _get_enclosing_symbol_from_value(self, symbol: str) -> Optional[str]:
         """Extract the enclosing method/function symbol from a value symbol."""

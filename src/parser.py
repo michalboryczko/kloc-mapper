@@ -1,20 +1,7 @@
-"""SCIP protobuf parsing utilities."""
+"""SCIP parsing utilities."""
 
-from pathlib import Path
 from typing import Optional
 import re
-
-from src import scip_pb2
-
-
-def parse_scip_file(filepath: str | Path) -> scip_pb2.Index:
-    """Parse a SCIP protobuf file and return the Index message."""
-    with open(filepath, "rb") as f:
-        data = f.read()
-
-    index = scip_pb2.Index()
-    index.ParseFromString(data)
-    return index
 
 
 def parse_symbol_string(symbol: str) -> dict:
@@ -71,7 +58,7 @@ def extract_fqn_from_descriptor(descriptor: str) -> str:
         method_part = arg_match.group(1)
         arg_name = arg_match.group(2)
         method_fqn = extract_fqn_from_descriptor(method_part + ".")
-        return f"{method_fqn}::{arg_name}"
+        return f"{method_fqn}.{arg_name}"
 
     # Split by # to get class and member
     if "#" in d:
