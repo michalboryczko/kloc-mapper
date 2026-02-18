@@ -78,10 +78,18 @@ build_macos() {
         pip3 install pyinstaller
     fi
 
-    pyinstaller --onefile --name kloc-mapper \
-        --collect-all src \
-        --clean \
-        build_entry.py
+    # Use uv run to ensure pyinstaller is found in the venv
+    if command -v uv &> /dev/null; then
+        uv run pyinstaller --onefile --name kloc-mapper \
+            --collect-all src \
+            --clean \
+            build_entry.py
+    else
+        pyinstaller --onefile --name kloc-mapper \
+            --collect-all src \
+            --clean \
+            build_entry.py
+    fi
 
     echo "Binary: $OUTPUT_DIR/kloc-mapper (macOS)"
 }
