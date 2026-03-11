@@ -12,6 +12,11 @@ from src.models import (
     generate_value_node_id, generate_call_node_id, generate_node_id,
 )
 
+# Pre-compiled regex patterns for _symbol_to_fqn()
+_RE_METHOD_DOT = re.compile(r'#([a-zA-Z_][a-zA-Z0-9_]*)\(\)\.$')
+_RE_METHOD = re.compile(r'#([a-zA-Z_][a-zA-Z0-9_]*)\(\)$')
+_RE_PROPERTY = re.compile(r'#\$([a-zA-Z_][a-zA-Z0-9_]*)\.?$')
+
 
 class CallsMapper:
     """Maps calls.json data to Value and Call nodes with edges."""
@@ -416,11 +421,11 @@ class CallsMapper:
         fqn = symbol_part.replace("/", "\\").rstrip(".")
 
         # Convert method suffix
-        fqn = re.sub(r'#([a-zA-Z_][a-zA-Z0-9_]*)\(\)\.$', r'::\1()', fqn)
-        fqn = re.sub(r'#([a-zA-Z_][a-zA-Z0-9_]*)\(\)$', r'::\1()', fqn)
+        fqn = _RE_METHOD_DOT.sub(r'::\1()', fqn)
+        fqn = _RE_METHOD.sub(r'::\1()', fqn)
 
         # Convert property suffix
-        fqn = re.sub(r'#\$([a-zA-Z_][a-zA-Z0-9_]*)\.?$', r'::$\1', fqn)
+        fqn = _RE_PROPERTY.sub(r'::$\1', fqn)
 
         # Clean up
         fqn = fqn.rstrip("#").rstrip(".")

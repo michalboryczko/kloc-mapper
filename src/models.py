@@ -1,6 +1,6 @@
 """Data models for Source-of-Truth JSON."""
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 import hashlib
@@ -51,7 +51,7 @@ class EdgeType(str, Enum):
     TYPE_OF = "type_of"            # Value -> Class/Interface (runtime type)
 
 
-@dataclass
+@dataclass(slots=True)
 class Range:
     """Source code range."""
     start_line: int
@@ -60,10 +60,15 @@ class Range:
     end_col: int
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        return {
+            "start_line": self.start_line,
+            "start_col": self.start_col,
+            "end_line": self.end_line,
+            "end_col": self.end_col,
+        }
 
 
-@dataclass
+@dataclass(slots=True)
 class Location:
     """Source location (file + range)."""
     file: str
@@ -71,10 +76,10 @@ class Location:
     col: int = 0
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        return {"file": self.file, "line": self.line, "col": self.col}
 
 
-@dataclass
+@dataclass(slots=True)
 class Node:
     """A node in the SoT graph."""
     id: str
@@ -116,7 +121,7 @@ class Node:
         return d
 
 
-@dataclass
+@dataclass(slots=True)
 class Edge:
     """An edge in the SoT graph."""
     type: EdgeType
